@@ -1,0 +1,57 @@
+# Ignore local documentation drafts (uncomment/remove to track docs in Git)
+docs/
+
+# Raw & Processed Data (large files, immutable raw Parquet, DuckDB databases)
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/yellow/
+data/raw/yellow/*
+!data/raw/yellow/.gitkeep
+!data/raw/green/
+data/raw/green/*
+!data/raw/green/.gitkeep
+!data/raw/reference/
+data/raw/reference/*
+!data/raw/reference/.gitkeep
+!data/raw/weather/
+data/raw/weather/*
+!data/raw/weather/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+# Databases & state files
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+*.sqlite3
+
+# Python virtual environments & build artifacts
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing & linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environment variables & secrets
+.env
+.env.local
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
