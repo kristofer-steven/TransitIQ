@@ -1,4 +1,4 @@
-.PHONY: setup download-sample download-full download-weather generate-dims verify-raw lint test
+.PHONY: setup download-sample download-full download-weather generate-dims verify-raw ingest lint test
 
 PYTHON ?= python
 
@@ -24,6 +24,9 @@ generate-dims:
 
 verify-raw:
 	$(PYTHON) -m data.ingestion.verify_raw
+
+ingest:
+	$(PYTHON) -m data.preprocessing.build_duckdb
 
 lint:
 	$(PYTHON) -m ruff check .
