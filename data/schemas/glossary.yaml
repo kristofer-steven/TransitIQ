@@ -1,0 +1,220 @@
+version: "1.0"
+domain: "NYC TLC Urban Mobility Analytics"
+
+terms:
+  - term: trip
+    synonyms:
+      - ride
+      - trips
+      - rides
+    definition: "One validated taxi trip record in fact_trips."
+    sql_expression: "COUNT(*)"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.trip_id
+
+  - term: demand
+    synonyms:
+      - pickup demand
+      - trip demand
+      - busy
+      - busiest
+      - volume
+    definition: "Count of trips measured by pickup location and/or pickup timestamp."
+    sql_expression: "COUNT(*)"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+      - agg_zone_hourly_demand
+    referenced_columns:
+      - fact_trips.pickup_zone_id
+      - fact_trips.pickup_datetime
+      - agg_zone_hourly_demand.pickups
+
+  - term: revenue
+    synonyms:
+      - total revenue
+      - gross revenue
+      - total sales
+      - earnings
+    definition: "Sum of total_amount charged to passengers (includes fare, tips, tolls, and surcharges)."
+    sql_expression: "SUM(fact_trips.total_amount)"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.total_amount
+
+  - term: fare
+    synonyms:
+      - base fare
+      - meter fare
+      - time and distance fare
+    definition: "Base meter fare_amount in USD, excluding tips, tolls, taxes, and surcharges."
+    sql_expression: "fact_trips.fare_amount"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.fare_amount
+
+  - term: average_tip
+    synonyms:
+      - average tip
+      - avg tip
+      - mean tip
+      - typical tip
+    definition: >
+      Average tip_amount in USD computed over credit-card trips only
+      (payment_type_id = 1), because cash tips are not recorded by the taximeter.
+    sql_expression: "AVG(fact_trips.tip_amount)"
+    required_filter: "fact_trips.payment_type_id = 1"
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.tip_amount
+      - fact_trips.payment_type_id
+
+  - term: tip_rate
+    synonyms:
+      - tip rate
+      - tip percentage
+      - tip ratio
+      - tipping rate
+    definition: >
+      Ratio of tip_amount to fare_amount computed for credit-card trips
+      with positive base fare (payment_type_id = 1 AND fare_amount > 0).
+    sql_expression: "AVG(fact_trips.tip_amount / fact_trips.fare_amount)"
+    required_filter: "fact_trips.payment_type_id = 1 AND fact_trips.fare_amount > 0"
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.tip_amount
+      - fact_trips.fare_amount
+      - fact_trips.payment_type_id
+
+  - term: trip_duration
+    synonyms:
+      - trip duration
+      - travel time
+      - ride duration
+      - duration
+      - travel duration
+    definition: "Elapsed trip time in minutes (dropoff_datetime - pickup_datetime)."
+    sql_expression: "fact_trips.trip_duration_min"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.trip_duration_min
+      - fact_trips.pickup_datetime
+      - fact_trips.dropoff_datetime
+
+  - term: morning_peak
+    synonyms:
+      - morning peak
+      - morning rush
+      - morning rush hour
+      - am peak
+    definition: "Pickup hour 7 through 9 inclusive (07:00:00 to 09:59:59 NYC local time)."
+    sql_expression: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) BETWEEN 7 AND 9"
+    required_filter: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) BETWEEN 7 AND 9"
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.pickup_datetime
+
+  - term: evening_peak
+    synonyms:
+      - evening
+      - evening peak
+      - evening rush
+      - evening rush hour
+      - pm peak
+    definition: "Pickup hour 17 through 20 inclusive (17:00:00 to 20:59:59 NYC local time)."
+    sql_expression: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) BETWEEN 17 AND 20"
+    required_filter: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) BETWEEN 17 AND 20"
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.pickup_datetime
+
+  - term: night
+    synonyms:
+      - night
+      - nighttime
+      - late night
+      - overnight
+    definition: "Pickup hour 22-23 and 0-5 inclusive (22:00:00 to 05:59:59 NYC local time)."
+    sql_expression: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) IN (22, 23, 0, 1, 2, 3, 4, 5)"
+    required_filter: "EXTRACT(HOUR FROM fact_trips.pickup_datetime) IN (22, 23, 0, 1, 2, 3, 4, 5)"
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.pickup_datetime
+
+  - term: weekday
+    synonyms:
+      - weekday
+      - weekdays
+      - workday
+      - business day
+    definition: "Monday through Friday (dim_date.is_weekend = FALSE)."
+    sql_expression: "dim_date.is_weekend = FALSE"
+    required_filter: "dim_date.is_weekend = FALSE"
+    referenced_tables:
+      - dim_date
+      - fact_trips
+    referenced_columns:
+      - dim_date.is_weekend
+      - fact_trips.pickup_datetime
+
+  - term: weekend
+    synonyms:
+      - weekend
+      - weekends
+      - saturday and sunday
+    definition: "Saturday and Sunday (dim_date.is_weekend = TRUE)."
+    sql_expression: "dim_date.is_weekend = TRUE"
+    required_filter: "dim_date.is_weekend = TRUE"
+    referenced_tables:
+      - dim_date
+      - fact_trips
+    referenced_columns:
+      - dim_date.is_weekend
+      - fact_trips.pickup_datetime
+
+  - term: airport_trip
+    synonyms:
+      - airport trip
+      - airport trips
+      - airport ride
+      - airport traffic
+    definition: >
+      Any trip whose pickup or drop-off zone is one of the three major NYC area airports:
+      Newark Airport (zone_id=1), JFK Airport (zone_id=132), or LaGuardia Airport (zone_id=138).
+    sql_expression: "(fact_trips.pickup_zone_id IN (1, 132, 138) OR fact_trips.dropoff_zone_id IN (1, 132, 138))"
+    required_filter: "(fact_trips.pickup_zone_id IN (1, 132, 138) OR fact_trips.dropoff_zone_id IN (1, 132, 138))"
+    referenced_tables:
+      - fact_trips
+      - dim_zone
+    referenced_columns:
+      - fact_trips.pickup_zone_id
+      - fact_trips.dropoff_zone_id
+      - dim_zone.zone
+
+  - term: taxi
+    synonyms:
+      - taxi
+      - taxis
+      - cab
+      - cabs
+    definition: "Both Yellow and Green taxi trips combined unless a specific service_type is requested."
+    sql_expression: "fact_trips.service_type IN ('yellow', 'green')"
+    required_filter: null
+    referenced_tables:
+      - fact_trips
+    referenced_columns:
+      - fact_trips.service_type
