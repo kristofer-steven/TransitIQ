@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 DEFAULT_CATALOG_PATH = Path(__file__).resolve().parent / "catalog.yaml"
+DEFAULT_GLOSSARY_PATH = Path(__file__).resolve().parent / "glossary.yaml"
 
 
 class TemporalCoverage(BaseModel):
@@ -211,3 +213,56 @@ def verify_catalog_against_duckdb(
             )
 
     return discrepancies
+
+
+class GlossaryTermEntry(BaseModel):
+    """A single domain business definition from glossary.yaml."""
+
+    term: str
+    synonyms: list[str] = Field(default_factory=list)
+    definition: str
+    sql_expression: str
+    required_filter: str | None = None
+    referenced_tables: list[str] = Field(default_factory=list)
+    referenced_columns: list[str] = Field(default_factory=list)
+
+
+class BusinessGlossary(BaseModel):
+    """Top-level semantic business glossary model representing glossary.yaml."""
+
+    version: str
+    domain: str
+    terms: list[GlossaryTermEntry]
+
+    def term_map(self) -> dict[str, GlossaryTermEntry]:
+        """Return a mapping of canonical term name -> GlossaryTermEntry."""
+        return {entry.term: entry for entry in self.terms}
+
+    def get_term(self, term_name: str) -> GlossaryTermEntry:
+        """Retrieve a glossary term by canonical name or raise KeyError."""
+        mapping = self.term_map()
+        if term_name not in mapping:
+            raise KeyError(f"Unknown glossary term '{term_name}'.")
+        return mapping[term_name]
+
+    def match_terms_in_text(self, text: str) -> list[GlossaryTermEntry]:
+        """Find all glossary terms whose canonical name or synonym appears in `text`."""
+        lower_text = text.lower()
+        matched: list[GlossaryTermEntry] = []
+        for entry in self.terms:
+            candidates = [entry.term.replace("_", " "), entry.term, *entry.synonyms]
+            for phrase in candidates:
+                pattern = rf"\b{re.escape(phrase.lower())}\b"
+                if re.search(pattern, lower_text):
+                    matched.append(entry)
+                    break
+        return matched
+
+
+def load_glossary(path: Path = DEFAULT_GLOSSARY_PATH) -> BusinessGlossary:
+    """Load and validate glossary.yaml into a BusinessGlossary instance."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Glossary YAML not found at {path}")
+    raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return BusinessGlossary.model_validate(raw_data)
+
