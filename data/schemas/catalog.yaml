@@ -1,0 +1,444 @@
+version: "1.0"
+database: "transitiq"
+dialect: "duckdb"
+as_of_date: "2024-12-31"
+temporal_coverage:
+  start_date: "2023-01-01"
+  end_date: "2024-12-31"
+
+tables:
+  - name: fact_trips
+    description: >
+      Primary analytical fact table containing one row per validated NYC TLC
+      Yellow or Green taxi trip between January 2023 and December 2024.
+    grain: "One row per valid taxi trip (trip_id)"
+    allow_query: true
+    primary_key:
+      - trip_id
+    foreign_keys:
+      - column: pickup_zone_id
+        target_table: dim_zone
+        target_column: zone_id
+        join_condition: "fact_trips.pickup_zone_id = dim_zone.zone_id"
+        description: "Join to dim_zone for pickup zone name, borough, and service zone."
+      - column: dropoff_zone_id
+        target_table: dim_zone
+        target_column: zone_id
+        join_condition: "fact_trips.dropoff_zone_id = dim_zone.zone_id"
+        description: "Join to dim_zone for drop-off zone name, borough, and service zone."
+      - column: pickup_datetime
+        target_table: dim_date
+        target_column: date
+        join_condition: "CAST(fact_trips.pickup_datetime AS DATE) = dim_date.date"
+        description: "Join pickup timestamp date to dim_date for weekday/weekend and US holiday flags."
+      - column: pickup_datetime
+        target_table: weather_daily
+        target_column: date
+        join_condition: "CAST(fact_trips.pickup_datetime AS DATE) = weather_daily.date"
+        description: "Join pickup timestamp date to weather_daily for precipitation, snow, and temperature."
+      - column: payment_type_id
+        target_table: dim_payment_type
+        target_column: payment_type_id
+        join_condition: "fact_trips.payment_type_id = dim_payment_type.payment_type_id"
+        description: "Join to dim_payment_type for human-readable payment method name."
+      - column: rate_code_id
+        target_table: dim_rate_code
+        target_column: rate_code_id
+        join_condition: "fact_trips.rate_code_id = dim_rate_code.rate_code_id"
+        description: "Join to dim_rate_code for human-readable tariff rate description."
+      - column: vendor_id
+        target_table: dim_vendor
+        target_column: vendor_id
+        join_condition: "fact_trips.vendor_id = dim_vendor.vendor_id"
+        description: "Join to dim_vendor for TPEP/LPEP technology provider name."
+    columns:
+      - name: trip_id
+        type: BIGINT
+        nullable: false
+        description: "Unique deterministic surrogate key for each valid trip."
+      - name: service_type
+        type: VARCHAR
+        nullable: false
+        description: "Taxi service type: 'yellow' (Yellow Medallion) or 'green' (Boro Green Taxi)."
+      - name: vendor_id
+        type: INTEGER
+        nullable: false
+        description: "Technology vendor ID providing the trip record (foreign key to dim_vendor.vendor_id)."
+      - name: pickup_datetime
+        type: TIMESTAMP
+        nullable: false
+        description: "NYC local date and time when the meter was engaged (pickup timestamp)."
+      - name: dropoff_datetime
+        type: TIMESTAMP
+        nullable: false
+        description: "NYC local date and time when the meter was disengaged (drop-off timestamp)."
+      - name: pickup_zone_id
+        type: INTEGER
+        nullable: false
+        description: "TLC Taxi Zone ID where the trip started (foreign key to dim_zone.zone_id)."
+      - name: dropoff_zone_id
+        type: INTEGER
+        nullable: false
+        description: "TLC Taxi Zone ID where the trip ended (foreign key to dim_zone.zone_id)."
+      - name: passenger_count
+        type: INTEGER
+        nullable: true
+        description: "Driver-reported number of passengers (> 0); NULL when unreported or originally 0."
+      - name: trip_distance_mi
+        type: DOUBLE
+        nullable: false
+        description: "Elapsed trip distance in miles reported by the taximeter (> 0 and <= 200)."
+      - name: trip_duration_min
+        type: DOUBLE
+        nullable: false
+        description: "Trip duration in minutes computed as (dropoff_datetime - pickup_datetime)."
+      - name: rate_code_id
+        type: INTEGER
+        nullable: false
+        description: "Final rate code in effect at the end of the trip (foreign key to dim_rate_code.rate_code_id)."
+      - name: payment_type_id
+        type: INTEGER
+        nullable: false
+        description: "Numeric payment method code (1=Credit card, 2=Cash, etc.; foreign key to dim_payment_type)."
+      - name: fare_amount
+        type: DOUBLE
+        nullable: false
+        description: "Time-and-distance base fare in USD calculated by the meter (excludes tips, tolls, surcharges)."
+      - name: tip_amount
+        type: DOUBLE
+        nullable: false
+        description: "Tip amount in USD (automatically populated for credit card trips; cash tips are not recorded)."
+      - name: tolls_amount
+        type: DOUBLE
+        nullable: false
+        description: "Total amount of all tolls paid during the trip in USD."
+      - name: congestion_surcharge
+        type: DOUBLE
+        nullable: false
+        description: "New York State congestion surcharge collected on the trip in USD."
+      - name: airport_fee
+        type: DOUBLE
+        nullable: false
+        description: "Airport pickup fee in USD for LaGuardia and JFK airports (0.0 for non-airport or Green taxi)."
+      - name: total_amount
+        type: DOUBLE
+        nullable: false
+        description: "Total amount charged to passengers in USD (includes fare, tip, tolls, taxes, and surcharges)."
+
+  - name: dim_zone
+    description: >
+      NYC TLC Taxi Zone dimension table mapping zone_id (1-265) to zone name,
+      borough (Manhattan, Brooklyn, Queens, Bronx, Staten Island, EWR), and service zone.
+    grain: "One row per NYC TLC taxi zone (zone_id)"
+    allow_query: true
+    primary_key:
+      - zone_id
+    foreign_keys: []
+    columns:
+      - name: zone_id
+        type: INTEGER
+        nullable: false
+        description: "Primary key TLC LocationID (1-265). 264 and 265 represent Unknown / Outside NYC."
+      - name: zone
+        type: VARCHAR
+        nullable: false
+        description: "Official neighborhood or airport zone name (e.g., 'JFK Airport', 'Midtown Center')."
+      - name: borough
+        type: VARCHAR
+        nullable: false
+        description: "NYC borough name ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island', 'EWR', 'Unknown')."
+      - name: service_zone
+        type: VARCHAR
+        nullable: false
+        description: "TLC service zone classification ('Yellow Zone', 'Boro Zone', 'Airports', 'EWR', 'Unknown')."
+      - name: is_valid_nyc_zone
+        type: BOOLEAN
+        nullable: false
+        description: "TRUE for standard mapped zones (1-263); FALSE for 264 (Unknown) and 265 (Outside NYC)."
+
+  - name: dim_date
+    description: >
+      Calendar date dimension covering every day from 2023-01-01 to 2024-12-31
+      with ISO day-of-week, weekend flag, and US federal holiday indicators.
+    grain: "One row per calendar day (date)"
+    allow_query: true
+    primary_key:
+      - date
+    foreign_keys:
+      - column: date
+        target_table: weather_daily
+        target_column: date
+        join_condition: "dim_date.date = weather_daily.date"
+        description: "Join calendar date to daily weather observations."
+    columns:
+      - name: date
+        type: DATE
+        nullable: false
+        description: "Calendar date (YYYY-MM-DD)."
+      - name: year
+        type: INTEGER
+        nullable: false
+        description: "Four-digit calendar year (2023 or 2024)."
+      - name: month
+        type: INTEGER
+        nullable: false
+        description: "Calendar month number (1 = January ... 12 = December)."
+      - name: day_of_week
+        type: INTEGER
+        nullable: false
+        description: "ISO day of the week (1 = Monday ... 5 = Friday, 6 = Saturday, 7 = Sunday)."
+      - name: day_name
+        type: VARCHAR
+        nullable: false
+        description: "English weekday name ('Monday', 'Tuesday', ..., 'Sunday')."
+      - name: is_weekend
+        type: BOOLEAN
+        nullable: false
+        description: "TRUE if Saturday or Sunday (day_of_week IN (6, 7)); FALSE for Monday-Friday."
+      - name: is_holiday
+        type: BOOLEAN
+        nullable: false
+        description: "TRUE if the date is an official US federal holiday."
+      - name: holiday_name
+        type: VARCHAR
+        nullable: true
+        description: "Name of the US holiday (e.g., 'New Year''s Day', 'Independence Day'), or NULL on non-holidays."
+
+  - name: dim_payment_type
+    description: >
+      Lookup dimension mapping payment_type_id to official NYC TLC payment method description.
+    grain: "One row per payment type code (payment_type_id)"
+    allow_query: true
+    primary_key:
+      - payment_type_id
+    foreign_keys: []
+    columns:
+      - name: payment_type_id
+        type: INTEGER
+        nullable: false
+        description: "Numeric payment code (0=Flex Fare trip, 1=Credit card, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided trip)."
+      - name: payment_type
+        type: VARCHAR
+        nullable: false
+        description: "Human-readable payment method name ('Credit card', 'Cash', etc.)."
+
+  - name: dim_rate_code
+    description: >
+      Lookup dimension mapping rate_code_id to official NYC TLC tariff rate description.
+    grain: "One row per rate code (rate_code_id)"
+    allow_query: true
+    primary_key:
+      - rate_code_id
+    foreign_keys: []
+    columns:
+      - name: rate_code_id
+        type: INTEGER
+        nullable: false
+        description: "Numeric rate code (1=Standard rate, 2=JFK, 3=Newark, 4=Nassau or Westchester, 5=Negotiated fare, 6=Group ride, 99=Unknown)."
+      - name: rate_code
+        type: VARCHAR
+        nullable: false
+        description: "Human-readable rate code name ('Standard rate', 'JFK', 'Newark', etc.)."
+
+  - name: dim_vendor
+    description: >
+      Lookup dimension mapping vendor_id to official NYC TLC technology provider name.
+    grain: "One row per vendor code (vendor_id)"
+    allow_query: true
+    primary_key:
+      - vendor_id
+    foreign_keys: []
+    columns:
+      - name: vendor_id
+        type: INTEGER
+        nullable: false
+        description: "Numeric vendor ID (1=Creative Mobile Technologies, 2=Curb Mobility, 6=Myle Technologies, 7=Helix)."
+      - name: vendor_name
+        type: VARCHAR
+        nullable: false
+        description: "Official vendor company name."
+
+  - name: weather_daily
+    description: >
+      Daily weather observations from NOAA GHCN-Daily NY City Central Park station (USW00094728)
+      covering 2023-01-01 through 2024-12-31 in Imperial units.
+    grain: "One row per calendar day (date)"
+    allow_query: true
+    primary_key:
+      - date
+    foreign_keys:
+      - column: date
+        target_table: dim_date
+        target_column: date
+        join_condition: "weather_daily.date = dim_date.date"
+        description: "Join weather date to dim_date for calendar attributes."
+    columns:
+      - name: date
+        type: DATE
+        nullable: false
+        description: "Observation date (YYYY-MM-DD)."
+      - name: precip_in
+        type: DOUBLE
+        nullable: true
+        description: "Total daily liquid precipitation in inches (0.0 on dry days)."
+      - name: snow_in
+        type: DOUBLE
+        nullable: true
+        description: "Total daily snowfall in inches (0.0 on days without snow)."
+      - name: tmax_f
+        type: DOUBLE
+        nullable: true
+        description: "Daily maximum air temperature in degrees Fahrenheit."
+      - name: tmin_f
+        type: DOUBLE
+        nullable: true
+        description: "Daily minimum air temperature in degrees Fahrenheit."
+
+  - name: agg_zone_hourly_demand
+    description: >
+      Pre-aggregated hourly trip demand, drop-offs, average base fare, and average distance
+      per taxi zone. Use for fast zone-hour demand analysis and time-series forecasting.
+    grain: "One row per (zone_id, hour_ts)"
+    allow_query: true
+    primary_key:
+      - zone_id
+      - hour_ts
+    foreign_keys:
+      - column: zone_id
+        target_table: dim_zone
+        target_column: zone_id
+        join_condition: "agg_zone_hourly_demand.zone_id = dim_zone.zone_id"
+        description: "Join to dim_zone for zone name and borough."
+      - column: hour_ts
+        target_table: dim_date
+        target_column: date
+        join_condition: "CAST(agg_zone_hourly_demand.hour_ts AS DATE) = dim_date.date"
+        description: "Join truncated hour timestamp date to dim_date."
+      - column: hour_ts
+        target_table: weather_daily
+        target_column: date
+        join_condition: "CAST(agg_zone_hourly_demand.hour_ts AS DATE) = weather_daily.date"
+        description: "Join truncated hour timestamp date to weather_daily."
+    columns:
+      - name: zone_id
+        type: INTEGER
+        nullable: false
+        description: "TLC Taxi Zone ID (foreign key to dim_zone.zone_id)."
+      - name: hour_ts
+        type: TIMESTAMP
+        nullable: false
+        description: "Hour bucket timestamp truncated to the start of the hour (YYYY-MM-DD HH:00:00)."
+      - name: pickups
+        type: BIGINT
+        nullable: false
+        description: "Number of valid trip pickups occurring in this zone during this hour."
+      - name: dropoffs
+        type: BIGINT
+        nullable: false
+        description: "Number of valid trip drop-offs occurring in this zone during this hour."
+      - name: avg_fare
+        type: DOUBLE
+        nullable: true
+        description: "Average base fare_amount in USD for pickups in this zone-hour (NULL if pickups = 0)."
+      - name: avg_distance_mi
+        type: DOUBLE
+        nullable: true
+        description: "Average trip distance in miles for pickups in this zone-hour (NULL if pickups = 0)."
+
+  - name: trips_quarantine
+    description: >
+      Audit table storing raw trip records rejected by the Data Quality pipeline
+      along with source file, year_month, and the specific rejection_reason.
+    grain: "One row per quarantined raw trip (trip_id)"
+    allow_query: true
+    primary_key:
+      - trip_id
+    foreign_keys: []
+    columns:
+      - name: trip_id
+        type: BIGINT
+        nullable: false
+        description: "Surrogate key of the rejected raw record."
+      - name: service_type
+        type: VARCHAR
+        nullable: false
+        description: "Taxi service type ('yellow' or 'green')."
+      - name: vendor_id
+        type: INTEGER
+        nullable: true
+        description: "Normalized vendor ID."
+      - name: pickup_datetime
+        type: TIMESTAMP
+        nullable: true
+        description: "Normalized pickup timestamp."
+      - name: dropoff_datetime
+        type: TIMESTAMP
+        nullable: true
+        description: "Normalized drop-off timestamp."
+      - name: pickup_zone_id
+        type: INTEGER
+        nullable: true
+        description: "Normalized pickup zone ID."
+      - name: dropoff_zone_id
+        type: INTEGER
+        nullable: true
+        description: "Normalized drop-off zone ID."
+      - name: passenger_count
+        type: INTEGER
+        nullable: true
+        description: "Normalized passenger count."
+      - name: trip_distance_mi
+        type: DOUBLE
+        nullable: true
+        description: "Raw trip distance in miles."
+      - name: trip_duration_min
+        type: DOUBLE
+        nullable: true
+        description: "Computed trip duration in minutes."
+      - name: rate_code_id
+        type: INTEGER
+        nullable: true
+        description: "Normalized rate code ID."
+      - name: payment_type_id
+        type: INTEGER
+        nullable: true
+        description: "Normalized payment type ID."
+      - name: fare_amount
+        type: DOUBLE
+        nullable: true
+        description: "Raw base fare amount in USD."
+      - name: tip_amount
+        type: DOUBLE
+        nullable: true
+        description: "Tip amount in USD."
+      - name: tolls_amount
+        type: DOUBLE
+        nullable: true
+        description: "Tolls amount in USD."
+      - name: congestion_surcharge
+        type: DOUBLE
+        nullable: true
+        description: "Congestion surcharge in USD."
+      - name: airport_fee
+        type: DOUBLE
+        nullable: true
+        description: "Airport fee in USD."
+      - name: total_amount
+        type: DOUBLE
+        nullable: true
+        description: "Raw total amount in USD."
+      - name: source_file
+        type: VARCHAR
+        nullable: false
+        description: "Name of the raw monthly Parquet file from which the record originated."
+      - name: year_month
+        type: VARCHAR
+        nullable: false
+        description: "Expected year-month ('YYYY-MM') of the source file."
+      - name: rejection_reason
+        type: VARCHAR
+        nullable: false
+        description: >
+          Data quality rule that quarantined the row ('null_or_invalid_timestamp',
+          'out_of_month_pickup', 'excessive_duration', 'invalid_distance',
+          'negative_amount', or 'duplicate_trip').
